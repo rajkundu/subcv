@@ -110,3 +110,8 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+#Raj's stuff
+data/*
+eval_output/*
+labelData/*
