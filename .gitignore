@@ -111,7 +111,8 @@ ENV/
 # mypy
 .mypy_cache/
 
-#Raj's stuff
+#My stuff
+.vscode/*
 data/*
 eval_output/*
 labelData/*
