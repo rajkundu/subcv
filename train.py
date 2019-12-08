@@ -114,11 +114,17 @@ def load_checkpoint(checkpoint_fpath, model, optimizer):
     optimizer.load_state_dict(checkpoint['optimizer'])
 
     # Convert to CUDA if necessary
-    if(torch.cuda_is_available()):
+    if(torch.cuda.is_available()):
         for state in optimizer.state.values():
             for k, v in state.items():
                 if torch.is_tensor(v):
                     state[k] = v.cuda()
+    # Convert to CPU if necessary
+    else:
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.cpu()
 
     return model, optimizer
 
