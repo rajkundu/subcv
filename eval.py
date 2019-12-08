@@ -352,7 +352,7 @@ if __name__ == "__main__":
         # predict on input test image
         image = image.to(device)
         with torch.no_grad():        
-            output = model(image)
+            output = model(image).to(device)
 
         # NB, output is:
         # [batch, image_id, [x_center, y_center, width, height, objectness_score, class_score1, class_score2, ...]]
@@ -370,7 +370,7 @@ if __name__ == "__main__":
             output = process_output(output, num_classes)
 
             # Center to corner
-            output_ = copy.deepcopy(output).to(device)
+            output_ = copy.deepcopy(output)
             output[:,0] = output_[:,0] - output_[:,2]/2
             output[:,1] = output_[:,1] - output_[:,3]/2
             output[:,2] = output_[:,0] + output_[:,2]/2
