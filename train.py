@@ -268,7 +268,7 @@ cpFreq = 2
 
 # Begin
 for epoch in range(args.epochs):
-    print('Beginning epoch {0}/{1}:'.format(epoch, args.epochs - 1))
+    print('Beginning epoch {0}/{1}:'.format(epoch + 1, args.epochs))
 
     for image, ground_truth in tqdm(data_loader):
 
@@ -356,7 +356,7 @@ save_loss = 0
 
 # Begin
 for epoch in range(args.epochs):
-    print('Beginning epoch {0}/{1}:'.format(epoch, args.epochs - 1))
+    print('Beginning epoch {0}/{1}:'.format(epoch + 1, args.epochs))
 
     for image, ground_truth in tqdm(data_loader):
         if len(ground_truth) == 0:
