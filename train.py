@@ -113,6 +113,13 @@ def load_checkpoint(checkpoint_fpath, model, optimizer):
     # Load for optimizer
     optimizer.load_state_dict(checkpoint['optimizer'])
 
+    # Convert to CUDA if necessary
+    if(torch.cuda_is_available()):
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.cuda()
+
     return model, optimizer
 
 def print_param_grad(model):
@@ -239,6 +246,10 @@ print('Size of data / batch size (iterations) = {}'.format(iterations))
 
 ### TRAIN MODEL ###
 
+# Use CUDA device if available and set to train
+model.to(device)
+model.train()
+
 if(len(args.resume) > 0):
     optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, rho=args.rho, eps=args.eps)
     if(not os.path.exists(args.resume)):
@@ -251,10 +262,6 @@ freeze_layers(model, layers_length - args.unfreeze, 1) # Freeze up until this la
 
 # Adadelta optimizer
 optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, rho=args.rho, eps=args.eps)
-
-# Use CUDA device if availalbe and set to train
-model.to(device)
-model.train()
 
 itern = 0
 total_loss = 0
