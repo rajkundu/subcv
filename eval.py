@@ -299,7 +299,7 @@ if __name__ == "__main__":
     bbox_attrs = 5 + num_classes
 
     # Load weights PyTorch style
-    model.load_state_dict(torch.load(args.weightsfile))
+    model.load_state_dict(torch.load(args.weightsfile)['state_dict'])
     model = model.to(device)  ## Really? You're gonna eval on the CPU? :)
 
     # Set to evaluation (don't accumulate gradients)
@@ -387,7 +387,7 @@ if __name__ == "__main__":
                 output[:, [1,3]] = torch.clamp(output[:,[1,3]], 0.0, orig_dim[0,1])
                 outputs = list(np.asarray(output[:,:8]))
 
-            classes = load_classes('data/obj.names')
+            classes = load_classes(os.path.join("data", "classes.names"))
             colors = pkl.load(open("pallete", "rb"))
             
             # # Test resizing to model dim

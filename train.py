@@ -28,9 +28,12 @@ from tensorboardX import SummaryWriter
 import sys
 import datetime
 from tqdm import tqdm
+import shutil
 
 # Folder to save checkpoints to
 SAVE_FOLDER = datetime.datetime.now().strftime("%B-%d-%Y-%I:%M%p")
+if os.path.exists(os.path.join(os.getcwd(), 'runs', SAVE_FOLDER)):
+    shutil.rmtree(os.path.join(os.getcwd(), 'runs', SAVE_FOLDER))
 os.makedirs(os.path.join(os.getcwd(), 'runs', SAVE_FOLDER))
 
 # For tensorboard
@@ -47,13 +50,15 @@ def arg_parse():
     """
     parser = argparse.ArgumentParser(description='YOLO v3 Training Module')
     parser.add_argument("--cfg", dest='cfgfile', help="Config file",
-                        default="cfg/yolov3.cfg", type=str)
+                        default=os.path.join("cfg","yolov3.cfg"), type=str)
     parser.add_argument("--weights", dest='weightsfile', help="weightsfile",
                         default="yolov3.weights", type=str)
     parser.add_argument("--datacfg", dest="datafile", 
                         help="cfg file containing the configuration for the dataset",
-                        type=str, default="data/obj.data")
-    parser.add_argument("--lr", dest="lr", type=float, default=0.001)
+                        type=str, default=os.path.join("data","classes.data"))
+    parser.add_argument("--lr", dest="lr", type=float, default=1.0)
+    parser.add_argument("--epochs", dest="epochs", type=int, default=3)
+    parser.add_argument("--resume", nargs="?", type=str, const=os.path.join("runs","latest.pth"), default="")
     parser.add_argument("--mom", dest="mom", type=float, default=0)
     parser.add_argument("--wd", dest="wd", type=float, default=0)
     parser.add_argument("--unfreeze", dest="unfreeze", type=int, default=4,
@@ -70,6 +75,9 @@ model.load_weights(args.weightsfile)
 # Unfreeze all but this number of layers at the beginning
 layers_length = len(list(model.parameters()))
 
+# "unfreeze" refers to the last number of layers to tune (allow gradients to be tracked - backprop)
+stop_layer = layers_length - (args.unfreeze * 2) # Freeze up to this layer (open up more than first phase)
+
 # Load the config file
 net_options =  model.net_info
 
@@ -82,7 +90,6 @@ saturation = int(float(net_options['saturation'])*255)    #saturation related au
 exposure = int(float(net_options['exposure'])*255)
 hue = int(float(net_options['hue'])*179)
 
-steps = int(net_options['steps'])
 # scales = net_options['scales']
 num_classes = net_options['classes']
 bs = net_options['batch']
@@ -98,6 +105,21 @@ inp_dim = int(inp_dim)
 num_classes = int(num_classes)
 bs = int(bs)
 
+def load_checkpoint(checkpoint_fpath, model, optimizer):
+    # Load the state dicts from file
+    checkpoint = torch.load(checkpoint_fpath)
+    # Load for model
+    model.load_state_dict(checkpoint['state_dict'])
+
+    # Unfreeze model & have to re-instantiate optimizer
+    unfreeze_layers(model, stop_layer)
+    optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=lr, rho=0.95, eps=1e-08)
+
+    # Load for optimizer
+    optimizer.load_state_dict(checkpoint['optimizer'])
+
+    return model, optimizer
+
 def freeze_layers(model, stop_layer):
     """Utility to stop tracking gradients in earlier layers of
     NN for transfer learning"""
@@ -108,6 +130,19 @@ def freeze_layers(model, stop_layer):
         else:
             print("Parameter has gradients tracked.")
             param.requires_grad = True
+        cntr+=1
+    return model
+def unfreeze_layers(model, stop_layer):
+    cntr = 0
+    for name, param in model.named_parameters():
+        if cntr < stop_layer:
+            param.requires_grad = False
+        else:
+            if 'batch_norm' not in name:
+                print("Parameter has gradients tracked.")
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
         cntr+=1
     return model
 
@@ -127,7 +162,7 @@ def YOLO_loss(ground_truth, output):
     loss_inds = torch.nonzero(ground_truth[:,:,-4] > -1)
     objectness_pred = output[loss_inds[:,0],loss_inds[:,1],4]
     target = ground_truth[loss_inds[:,0],loss_inds[:,1],4]
-    objectness_loss = torch.nn.MSELoss(size_average=False)(objectness_pred, target)
+    objectness_loss = torch.nn.MSELoss(reduction='sum')(objectness_pred, target)
     #Only objectness loss is counted for all boxes
     object_box_inds = torch.nonzero(ground_truth[:,:,4] > 0).view(-1, 2)
 
@@ -139,15 +174,15 @@ def YOLO_loss(ground_truth, output):
     pred_ob = output[object_box_inds[:,0], object_box_inds[:,1]]
     
     #get centre x and centre y 
-    centre_x_loss = torch.nn.MSELoss(size_average=False)(pred_ob[:,0], gt_ob[:,0])
-    centre_y_loss = torch.nn.MSELoss(size_average=False)(pred_ob[:,1], gt_ob[:,1])
+    centre_x_loss = torch.nn.MSELoss(reduction='sum')(pred_ob[:,0], gt_ob[:,0])
+    centre_y_loss = torch.nn.MSELoss(reduction='sum')(pred_ob[:,1], gt_ob[:,1])
 
     total_loss += centre_x_loss 
     total_loss += centre_y_loss 
     
     #get w,h loss
-    w_loss = torch.nn.MSELoss(size_average=False)(pred_ob[:,2], gt_ob[:,2])
-    h_loss = torch.nn.MSELoss(size_average=False)(pred_ob[:,3], gt_ob[:,3])
+    w_loss = torch.nn.MSELoss(reduction='sum')(pred_ob[:,2], gt_ob[:,2])
+    h_loss = torch.nn.MSELoss(reduction='sum')(pred_ob[:,3], gt_ob[:,3])
     
     total_loss += w_loss 
     total_loss += h_loss 
@@ -163,7 +198,7 @@ def YOLO_loss(ground_truth, output):
         targ_labels = pred_ob[:,5 + c_n].view(-1,1)
         targ_labels = targ_labels.repeat(1,2)
         targ_labels[:,0] = 1 - targ_labels[:,0]
-        cls_loss += torch.nn.CrossEntropyLoss(size_average=False)(targ_labels, cls_labels[:,c_n].long())
+        cls_loss += torch.nn.CrossEntropyLoss(reduction='sum')(targ_labels, cls_labels[:,c_n].long())
 
     total_loss += cls_loss
 
@@ -186,7 +221,7 @@ custom_transforms = Sequence([YoloResizeTransform(inp_dim), Normalize()])
 
 # Data instance and loader
 data = CustomDataset(root="data", num_classes=num_classes, 
-                     ann_file="data/train.txt",
+                     ann_file=os.path.join("data","train.txt"),
                      cfg_file=args.cfgfile,
                      det_transforms=custom_transforms)
 print('Batch size ', bs)
@@ -200,31 +235,26 @@ print('Size of data / batch size (iterations) = {}'.format(iterations))
 
 ### TRAIN MODEL ###
 
-# Freeze layers according to user specification
-stop_layer = layers_length - args.unfreeze # Freeze up until this layer
-cntr = 0
-
-for name, param in model.named_parameters():
-    if cntr < stop_layer:
-        param.requires_grad = False
-    else:
-        if 'batch_norm' not in name:
-            print("Parameter has gradients tracked.")
-            param.requires_grad = True
-        else:
-            param.requires_grad = False
-    cntr+=1
-
-for name, param in model.named_parameters():
-    print(name +':\t'+str(param.requires_grad))
-
-# Use this optimizer calculation for training loss
+'''# Use this optimizer calculation for training loss
 optimizer = optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), 
     lr=lr, weight_decay=wd, momentum=momentum)
 
 # LR scheduler (to reduce LR as we train)
 # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer)
-scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
+scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)'''
+
+optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=1.0, rho=0.95, eps=1e-08)
+if(len(args.resume) > 0):
+    if(not os.path.exists(args.resume)):
+        print("Checkpoint save file not found: " + args.resume)
+        exit()
+    model, optimizer = load_checkpoint(args.resume, model, optimizer)
+
+# Freeze layers according to user specification
+freeze_layers(model, layers_length - args.unfreeze) # Freeze up until this layer
+
+for name, param in model.named_parameters():
+    print(name +':\t'+str(param.requires_grad))
 
 # Use CUDA device if availalbe and set to train
 model.to(device)
@@ -233,8 +263,13 @@ model.train()
 itern = 0
 total_loss = 0
 
+#Checkpoint every 2 epochs
+cpFreq = 2
+
 # Begin
-for step in range(steps):
+for epoch in range(args.epochs):
+    print('Beginning epoch {0}/{1}:'.format(epoch, args.epochs - 1))
+
     for image, ground_truth in tqdm(data_loader):
 
         if len(ground_truth) == 0:
@@ -277,16 +312,23 @@ for step in range(steps):
         itern += 1
 
     print('lr: ', optimizer.param_groups[0]["lr"])
-    print("Loss for epoch no: {0}: {1:.4f}\n".format(step, float(total_loss)/iterations))
-    writer.add_scalar("Loss/vanilla", float(total_loss)/iterations, step)
+    print("Loss: {0:.4f}\n".format(float(total_loss)/iterations))
+    writer.add_scalar("Loss/vanilla", float(total_loss)/iterations, epoch)
 
     # Checkpoint
-    if step % 1 == 0:
-        torch.save(model.state_dict(), os.path.join('runs', SAVE_FOLDER,
-            'epoch{0}-bs{1}-loss{2:.4f}.pth'.format(step, bs, float(total_loss)/iterations)))
+    if epoch % cpFreq == 0 or epoch == args.epochs:
+        checkpoint = {
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'frozen': list()
+        }
+        for param in model.parameters():
+            checkpoint['frozen'] = param.requires_grad
+        torch.save(checkpoint, os.path.join('runs', SAVE_FOLDER,
+            'epoch{0}-bs{1}-loss{2:.4f}.pth'.format(epoch, bs, float(total_loss)/iterations)))
 
     # Update LR if needed by scheduler
-    scheduler.step()
+    #scheduler.step()
     total_loss = 0 # reset
 
 ### DATA FOR FINE-TUNING ###
@@ -294,7 +336,7 @@ for step in range(steps):
 # Reset data loader
 # Data instance with transforms (augmentations) and PyTorch loader
 data = CustomDataset(root="data", num_classes=num_classes, 
-                     ann_file="data/train.txt", 
+                     ann_file=os.path.join("data","train.txt"), 
                      cfg_file=args.cfgfile,
                      det_transforms=custom_transforms)
 data_loader = DataLoader(data, batch_size=bs,
@@ -303,37 +345,19 @@ data_loader = DataLoader(data, batch_size=bs,
 
 ### FINE TUNE MODEL ON MORE LAYERS ###
 
-# "unfreeze" refers to the last number of layers to tune (allow gradients to be tracked - backprop)
-# stop_layer = layers_length - (args.unfreeze * 2) # Freeze up to this layer (open up more than first phase)
-
 # Open up the whole network
-stop_layer = 0
+model = unfreeze_layers(model, stop_layer)
 
-cntr = 0
-
-for name, param in model.named_parameters():
-    if cntr < stop_layer:
-        param.requires_grad = False
-    else:
-        if 'batch_norm' not in name:
-            print("Parameter has gradients tracked.")
-            param.requires_grad = True
-        else:
-            param.requires_grad = False
-    cntr+=1
-
-# Use this optimizer calculation for training loss
-optimizer = optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), 
-    lr=(optimizer.param_groups[0]["lr"] / 100), weight_decay=wd, momentum=momentum)
-
-# LR scheduler
-scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
+# Re-initialize optimizer to include unfrozen layers
+optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=1.0, rho=0.95, eps=1e-08)
 
 # For final loss measurement
 save_loss = 0
 
 # Begin
-for step in range(steps):
+for epoch in range(args.epochs):
+    print('Beginning epoch {0}/{1}:'.format(epoch, args.epochs - 1))
+
     for image, ground_truth in tqdm(data_loader):
         if len(ground_truth) == 0:
             continue
@@ -376,25 +400,27 @@ for step in range(steps):
         itern += 1
 
     print('lr: ', optimizer.param_groups[0]["lr"])
-    print("Loss for fine-tuning epoch no: {0}: {1:.4f}\n".format(step, float(total_loss)/iterations))
-    writer.add_scalar("Loss/vanilla", float(total_loss)/iterations, step)
+    print("Loss: {0:.4f}\n".format(float(total_loss)/iterations))
+    writer.add_scalar("Loss/vanilla", float(total_loss)/iterations, epoch)
 
     # Checkpoint
-    if step % 1 == 0:
-        torch.save(model.state_dict(), os.path.join('runs', SAVE_FOLDER,
-                'epoch{0}-bs{1}-loss{2:.4f}-fine.pth'.format(step+steps, bs, float(total_loss)/iterations)))
+    if epoch % cpFreq == 0  or epoch == args.epochs:
+        checkpoint = {
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict()
+        }
+        torch.save(checkpoint, os.path.join('runs', SAVE_FOLDER,
+                'epoch{0}-bs{1}-loss{2:.4f}-fine.pth'.format(epoch+args.epochs, bs, float(total_loss)/iterations)))
 
-    scheduler.step()
+    #scheduler.step()
     save_loss = total_loss
     total_loss = 0 # reset
 
 writer.close()
 
-# Save final model in pytorch format (the state dictionary only, i.e. parameters only)
-torch.save(model.state_dict(), os.path.join('runs', SAVE_FOLDER, 
-    'epoch{0}-final-bs{1}-loss{2:.4f}.pth'.format(step+steps, bs, float(save_loss)/iterations)))    
-    
-    
-
-
-
+# Save final model in pytorch format (model + optimizer state dictionaries)
+checkpoint = {
+    'state_dict': model.state_dict(),
+    'optimizer': optimizer.state_dict()
+}
+torch.save(checkpoint, os.path.join('runs', 'latest.pth'.format(epoch+args.epochs, bs, float(save_loss)/iterations)))
