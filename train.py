@@ -41,7 +41,11 @@ writer = SummaryWriter()
 random.seed(0)
 
 # Choose backend device for tensor operations - GPU or CPU
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    device = torch.device("cuda:0")
+    print("Using CUDA device")
+else:
+    device = torch.device("cpu")
 
 def arg_parse():
     """
@@ -49,23 +53,18 @@ def arg_parse():
 
     """
     parser = argparse.ArgumentParser(description='YOLO v3 Training Module')
-    parser.add_argument("--cfg", dest='cfgfile', help="Config file",
-                        default=os.path.join("cfg","yolov3.cfg"), type=str)
-    parser.add_argument("--weights", dest='weightsfile', help="weightsfile",
-                        default="yolov3.weights", type=str)
-    parser.add_argument("--datacfg", dest="datafile", 
-                        help="cfg file containing the configuration for the dataset",
-                        type=str, default=os.path.join("data","classes.data"))
+    parser.add_argument("--cfg", dest='cfgfile', help="Config file", type=str, default=os.path.join("cfg","yolov3.cfg"))
+    parser.add_argument("--weights", dest='weightsfile', help="weightsfile", type=str, default="yolov3.weights")
+    parser.add_argument("--datacfg", dest="datafile",  help="cfg file containing the configuration for the dataset", type=str, default=os.path.join("data","classes.data"))
     parser.add_argument("--lr", dest="lr", type=float, default=1.0)
-    parser.add_argument("--epochs", dest="epochs", type=int, default=3)
+    parser.add_argument("--rho", dest="rho", type=float, default=0.95)
+    parser.add_argument("--eps", dest="eps", type=float, default=1e-5)
+    parser.add_argument("--epochs", dest="epochs", type=int, default=5)
+    parser.add_argument("--unfreeze", dest="unfreeze", type=int, default=4, help="Last number of layers to unfreeze for training")
     parser.add_argument("--resume", nargs="?", type=str, const=os.path.join("runs","latest.pth"), default="")
-    parser.add_argument("--mom", dest="mom", type=float, default=0)
-    parser.add_argument("--wd", dest="wd", type=float, default=0)
-    parser.add_argument("--unfreeze", dest="unfreeze", type=int, default=4,
-                        help="Last number of layers to unfreeze for training")
-
     return parser.parse_args()
 
+#Parse arguments
 args = arg_parse()
 
 #Load the model
@@ -80,26 +79,22 @@ stop_layer = layers_length - (args.unfreeze * 2) # Freeze up to this layer (open
 
 # Load the config file
 net_options =  model.net_info
-
-##Parse the config file
+# Parse the config file
 batch = net_options['batch']
 angle = net_options['angle']    #The angle with which you want to rotate images as a part of augmentation
 
+'''
 # For RandomHSV() augmentation (see data_aug.py)
 saturation = int(float(net_options['saturation'])*255)    #saturation related augmentation
 exposure = int(float(net_options['exposure'])*255)
 hue = int(float(net_options['hue'])*179)
+'''
 
 # scales = net_options['scales']
 num_classes = net_options['classes']
 bs = net_options['batch']
 # Assume h == w
 inp_dim = net_options['height']
-
-# Assign from the command line args
-lr = args.lr
-wd = args.wd
-momentum = args.mom
 
 inp_dim = int(inp_dim)
 num_classes = int(num_classes)
@@ -112,23 +107,23 @@ def load_checkpoint(checkpoint_fpath, model, optimizer):
     model.load_state_dict(checkpoint['state_dict'])
 
     # Unfreeze model & have to re-instantiate optimizer
-    unfreeze_layers(model, stop_layer)
-    optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=lr, rho=0.95, eps=1e-08)
+    unfreeze_layers(model, checkpoint['stop_layer'])
+    optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, rho=args.rho, eps=args.eps)
 
     # Load for optimizer
     optimizer.load_state_dict(checkpoint['optimizer'])
 
     return model, optimizer
 
-def freeze_layers(model, stop_layer):
+def freeze_layers(model, stop_layer, offset):
     """Utility to stop tracking gradients in earlier layers of
     NN for transfer learning"""
-    cntr = 1
-    for param in model.parameters():
-        if cntr < stop_layer:
+    cntr = offset
+    for name, param in model.named_parameters():
+        if cntr < stop_layer or name.find('batch_norm') >= 0:
             param.requires_grad = False
         else:
-            print("Parameter has gradients tracked.")
+            print("Parameter " + name + " has gradients tracked.")
             param.requires_grad = True
         cntr+=1
     return model
@@ -138,8 +133,8 @@ def unfreeze_layers(model, stop_layer):
         if cntr < stop_layer:
             param.requires_grad = False
         else:
-            if 'batch_norm' not in name:
-                print("Parameter has gradients tracked.")
+            if name.find('batch_norm') < 0:
+                print("Parameter " + name + " has gradients tracked.")
                 param.requires_grad = True
             else:
                 param.requires_grad = False
@@ -235,23 +230,18 @@ print('Size of data / batch size (iterations) = {}'.format(iterations))
 
 ### TRAIN MODEL ###
 
-'''# Use this optimizer calculation for training loss
-optimizer = optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), 
-    lr=lr, weight_decay=wd, momentum=momentum)
-
-# LR scheduler (to reduce LR as we train)
-# scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer)
-scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)'''
-
-optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=1.0, rho=0.95, eps=1e-08)
 if(len(args.resume) > 0):
+    optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, rho=args.rho, eps=args.eps)
     if(not os.path.exists(args.resume)):
         print("Checkpoint save file not found: " + args.resume)
         exit()
     model, optimizer = load_checkpoint(args.resume, model, optimizer)
 
 # Freeze layers according to user specification
-freeze_layers(model, layers_length - args.unfreeze) # Freeze up until this layer
+freeze_layers(model, layers_length - args.unfreeze, 1) # Freeze up until this layer
+
+# Adadelta optimizer
+optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, rho=args.rho, eps=args.eps)
 
 for name, param in model.named_parameters():
     print(name +':\t'+str(param.requires_grad))
@@ -311,8 +301,9 @@ for epoch in range(args.epochs):
 
         itern += 1
 
-    print('lr: ', optimizer.param_groups[0]["lr"])
-    print("Loss: {0:.4f}\n".format(float(total_loss)/iterations))
+    print()
+    print('Learning Rate:\t', optimizer.param_groups[0]["lr"])
+    print("Loss:\t\t{0:.4f}\n".format(float(total_loss)/iterations))
     writer.add_scalar("Loss/vanilla", float(total_loss)/iterations, epoch)
 
     # Checkpoint
@@ -320,10 +311,8 @@ for epoch in range(args.epochs):
         checkpoint = {
             'state_dict': model.state_dict(),
             'optimizer': optimizer.state_dict(),
-            'frozen': list()
+            'stop_layer': stop_layer
         }
-        for param in model.parameters():
-            checkpoint['frozen'] = param.requires_grad
         torch.save(checkpoint, os.path.join('runs', SAVE_FOLDER,
             'epoch{0}-bs{1}-loss{2:.4f}.pth'.format(epoch, bs, float(total_loss)/iterations)))
 
@@ -349,7 +338,7 @@ data_loader = DataLoader(data, batch_size=bs,
 model = unfreeze_layers(model, stop_layer)
 
 # Re-initialize optimizer to include unfrozen layers
-optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=1.0, rho=0.95, eps=1e-08)
+optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, rho=args.rho, eps=args.eps)
 
 # For final loss measurement
 save_loss = 0
@@ -399,15 +388,17 @@ for epoch in range(args.epochs):
  
         itern += 1
 
-    print('lr: ', optimizer.param_groups[0]["lr"])
-    print("Loss: {0:.4f}\n".format(float(total_loss)/iterations))
+    print()
+    print('Learning rate:\t', optimizer.param_groups[0]["lr"])
+    print("Loss:\t\t{0:.4f}\n".format(float(total_loss)/iterations))
     writer.add_scalar("Loss/vanilla", float(total_loss)/iterations, epoch)
 
     # Checkpoint
     if epoch % cpFreq == 0  or epoch == args.epochs:
         checkpoint = {
             'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict()
+            'optimizer': optimizer.state_dict(),
+            'stop_layer': stop_layer
         }
         torch.save(checkpoint, os.path.join('runs', SAVE_FOLDER,
                 'epoch{0}-bs{1}-loss{2:.4f}-fine.pth'.format(epoch+args.epochs, bs, float(total_loss)/iterations)))
@@ -421,6 +412,7 @@ writer.close()
 # Save final model in pytorch format (model + optimizer state dictionaries)
 checkpoint = {
     'state_dict': model.state_dict(),
-    'optimizer': optimizer.state_dict()
+    'optimizer': optimizer.state_dict(),
+    'stop_layer': stop_layer
 }
 torch.save(checkpoint, os.path.join('runs', 'latest.pth'.format(epoch+args.epochs, bs, float(save_loss)/iterations)))
