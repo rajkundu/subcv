@@ -115,4 +115,4 @@ ENV/
 .vscode/*
 data/*
 eval_output/*
-labelData/*
+vocData/*
