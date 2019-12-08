@@ -4,7 +4,6 @@ runs
 *.pkl
 obj
 .DS_Store
-data*
 detection*
 temp*
 
@@ -113,6 +112,5 @@ ENV/
 
 #My stuff
 .vscode/*
-data/*
 eval_output/*
 vocData/*
