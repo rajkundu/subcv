@@ -107,7 +107,7 @@ def load_checkpoint(checkpoint_fpath, model, optimizer):
     model.load_state_dict(checkpoint['state_dict'])
 
     # Unfreeze model & have to re-instantiate optimizer
-    unfreeze_layers(model, checkpoint['stop_layer'])
+    unfreeze_layers(model, checkpoint['stop_layer'], False)
     optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, rho=args.rho, eps=args.eps)
 
     # Load for optimizer
@@ -115,7 +115,10 @@ def load_checkpoint(checkpoint_fpath, model, optimizer):
 
     return model, optimizer
 
-def freeze_layers(model, stop_layer, offset):
+def print_param_grad(model):
+    for name, param in model.named_parameters():
+        print(name +':\t'+str(param.requires_grad))
+def freeze_layers(model, stop_layer, offset, printParams=True):
     """Utility to stop tracking gradients in earlier layers of
     NN for transfer learning"""
     cntr = offset
@@ -123,21 +126,27 @@ def freeze_layers(model, stop_layer, offset):
         if cntr < stop_layer or name.find('batch_norm') >= 0:
             param.requires_grad = False
         else:
-            print("Parameter " + name + " has gradients tracked.")
             param.requires_grad = True
+        
+        if(printParams):
+            print(name +':\t'+str(param.requires_grad))
+
         cntr+=1
     return model
-def unfreeze_layers(model, stop_layer):
+def unfreeze_layers(model, stop_layer, printParams=True):
     cntr = 0
     for name, param in model.named_parameters():
         if cntr < stop_layer:
             param.requires_grad = False
         else:
             if name.find('batch_norm') < 0:
-                print("Parameter " + name + " has gradients tracked.")
                 param.requires_grad = True
             else:
                 param.requires_grad = False
+
+        if(printParams):
+            print(name +':\t'+str(param.requires_grad))
+
         cntr+=1
     return model
 
@@ -242,9 +251,6 @@ freeze_layers(model, layers_length - args.unfreeze, 1) # Freeze up until this la
 
 # Adadelta optimizer
 optimizer = optim.Adadelta(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, rho=args.rho, eps=args.eps)
-
-for name, param in model.named_parameters():
-    print(name +':\t'+str(param.requires_grad))
 
 # Use CUDA device if availalbe and set to train
 model.to(device)
