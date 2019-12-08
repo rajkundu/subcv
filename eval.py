@@ -370,7 +370,7 @@ if __name__ == "__main__":
             output = process_output(output, num_classes)
 
             # Center to corner
-            output_ = copy.deepcopy(output)
+            output_ = copy.deepcopy(output).to(device)
             output[:,0] = output_[:,0] - output_[:,2]/2
             output[:,1] = output_[:,1] - output_[:,3]/2
             output[:,2] = output_[:,0] + output_[:,2]/2
