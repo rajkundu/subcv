@@ -41,9 +41,9 @@ if DEBUG:
 random.seed(0)
 if torch.cuda.is_available():
     device = torch.device("cuda:0")
-    print("Using CUDA device")
 else:
     device = torch.device("cpu")
+print("Using device \"%s\"" % device)
 
 def arg_parse():
     """
