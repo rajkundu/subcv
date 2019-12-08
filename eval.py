@@ -39,7 +39,11 @@ if DEBUG:
     logwriter = open('debug_model.log', 'w')
 
 random.seed(0)
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    device = torch.device("cuda:0")
+    print("Using CUDA device")
+else:
+    device = torch.device("cpu")
 
 def arg_parse():
     """
@@ -321,8 +325,7 @@ if __name__ == "__main__":
     num_gts = 0
 
     # Make a directory for the image files with their bboxes
-    eval_output_dir = os.path.split(test_data.examples[0].rstrip())[0].replace('obj', 'eval_output')
-    os.makedirs(eval_output_dir, exist_ok=True)
+    os.makedirs('eval_output', exist_ok=True)
     
     # Get image files to match "image" from test_loader which does alphabetical
     with open(os.path.join('data', 'test.txt'), 'r') as f:
@@ -406,4 +409,4 @@ if __name__ == "__main__":
             predictions_all.append(outputs)
 
     # prec, rec, aps = custom_eval(predictions_all, ground_truths_all, num_gts=num_gts, ovthresh=overlap_thresh)
-    # print('Precision ', prec, 'Recall ', rec, 'Average precision ', np.mean(aps), sep='\n')
+    print('Precision ', prec, 'Recall ', rec, 'Average precision ', np.mean(aps), sep='\n')
