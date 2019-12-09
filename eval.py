@@ -303,7 +303,10 @@ if __name__ == "__main__":
     bbox_attrs = 5 + num_classes
 
     # Load weights PyTorch style
-    model.load_state_dict(torch.load(args.weightsfile)['state_dict'])
+    if(torch.cuda.is_available()):
+        model.load_state_dict(torch.load(args.weightsfile)['state_dict'])
+    else:
+        model.load_state_dict(torch.load(args.weightsfile, map_location=torch.device('cpu'))['state_dict'])
     model = model.to(device)  ## Really? You're gonna eval on the CPU? :)
 
     # Set to evaluation (don't accumulate gradients)
@@ -409,4 +412,4 @@ if __name__ == "__main__":
             predictions_all.append(outputs)
 
     # prec, rec, aps = custom_eval(predictions_all, ground_truths_all, num_gts=num_gts, ovthresh=overlap_thresh)
-    print('Precision ', prec, 'Recall ', rec, 'Average precision ', np.mean(aps), sep='\n')
+    # print('Precision ', prec, 'Recall ', rec, 'Average precision ', np.mean(aps), sep='\n')
