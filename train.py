@@ -326,7 +326,7 @@ for epoch in range(args.epochs):
     writer.add_scalar("Loss/vanilla", float(total_loss)/iterations, epoch)
 
     # Checkpoint
-    if epoch % cpFreq == 0 or epoch == args.epochs:
+    if epoch % cpFreq == 0 or epoch == 2 * args.epochs:
         checkpoint = {
             'state_dict': model.state_dict(),
             'optimizer': optimizer.state_dict(),
