@@ -326,14 +326,14 @@ for epoch in range(args.epochs):
     writer.add_scalar("Loss/vanilla", float(total_loss)/iterations, epoch)
 
     # Checkpoint
+    checkpoint = {
+        'state_dict': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'stop_layer': stop_layer
+    }
+    torch.save(checkpoint, os.path.join('runs', 'latest.pth'))
     if epoch % cpFreq == 0 or epoch == args.epochs - 1:
-        checkpoint = {
-            'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'stop_layer': stop_layer
-        }
-        torch.save(checkpoint, os.path.join('runs', SAVE_FOLDER,
-            'epoch{0}-bs{1}-loss{2:.4f}.pth'.format(epoch, bs, float(total_loss)/iterations)))
+        torch.save(checkpoint, os.path.join('runs', SAVE_FOLDER, 'epoch{0}-bs{1}-loss{2:.4f}-fine.pth'.format(epoch+args.epochs, bs, float(total_loss)/iterations)))
 
     # Update LR if needed by scheduler
     #scheduler.step()
@@ -411,27 +411,19 @@ for epoch in range(args.epochs):
     print('Learning rate:\t', optimizer.param_groups[0]["lr"])
     print("Loss:\t\t{0:.4f}\n".format(float(total_loss)/iterations))
     writer.add_scalar("Loss/vanilla", float(total_loss)/iterations, epoch)
-
+    
     # Checkpoint
-    if epoch % cpFreq == 0  or epoch == args.epochs - 1:
-        checkpoint = {
-            'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'stop_layer': stop_layer
-        }
-        torch.save(checkpoint, os.path.join('runs', SAVE_FOLDER,
-                'epoch{0}-bs{1}-loss{2:.4f}-fine.pth'.format(epoch+args.epochs, bs, float(total_loss)/iterations)))
+    checkpoint = {
+        'state_dict': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'stop_layer': stop_layer
+    }
+    torch.save(checkpoint, os.path.join('runs', 'latest.pth'))
+    if epoch % cpFreq == 0 or epoch == args.epochs - 1:
+        torch.save(checkpoint, os.path.join('runs', SAVE_FOLDER, 'epoch{0}-bs{1}-loss{2:.4f}-fine.pth'.format(epoch+args.epochs, bs, float(total_loss)/iterations)))
 
     #scheduler.step()
     save_loss = total_loss
     total_loss = 0 # reset
 
 writer.close()
-
-# Save final model in pytorch format (model + optimizer state dictionaries)
-checkpoint = {
-    'state_dict': model.state_dict(),
-    'optimizer': optimizer.state_dict(),
-    'stop_layer': stop_layer
-}
-torch.save(checkpoint, os.path.join('runs', 'latest.pth'))
